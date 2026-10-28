@@ -1,164 +1,54 @@
-#include "../inc/dispatcher.h"
-
-#include <stdlib.h>
+#include "dispatcher.h"
 #include <limits.h>
+#include <stdlib.h>
 
-Dispatcher create_dispatcher(Map *map, Point warehouse,
-                             Plane *planes, int plane_count,
-                             Station *stations, int station_count) {
-    Dispatcher dispatcher;
-
-    dispatcher.map = map;
-    dispatcher.warehouse = warehouse;
-
-    dispatcher.planes = planes;
-    dispatcher.plane_count = plane_count;
-
-    dispatcher.stations = stations;
-    dispatcher.station_count = station_count;
-
-    return dispatcher;
+Dispatcher create_dispatcher(Map *map, Point warehouse, Plane *planes,
+                             int plane_count, Station *stations, int station_count) {
+    Dispatcher d = {map, warehouse, planes, plane_count, stations, station_count};
+    return d;
 }
 
-static int get_distance(const Map *map, Point start, Point finish) {
+static int distance(const Map *map, Point from, Point to) {
     int length = 0;
-
-    Point *path = nearest_way(map, start, finish, &length);
-
-    if (path == NULL) {
-        return -1;
-    }
-
+    Point *path = nearest_way(map, from, to, &length);
     free(path);
-
-    return length - 1;
+    return length == 0 ? -1 : length - 1;
 }
 
-static int nearest_station_distance(const Dispatcher *dispatcher,
-                                    Point position) {
-    int best = INT_MAX;
+int dispatcher_assign(Dispatcher *d, Order *order, int time) {
+    if (order->status != ORDER_PENDING || time < order->created_at ||
+        time > order->deadline) return 0;
 
-    for (int i = 0; i < dispatcher->station_count; ++i) {
-        Station *station = &dispatcher->stations[i];
+    int to_client = distance(d->map, d->warehouse, order->destination);
+    if (to_client < 0) return 0;
+    int to_station = INT_MAX;
+    for (int j = 0; j < d->station_count; ++j) {
+        Station *s = &d->stations[j];
+        if (s->capacity <= 0) continue;
+        int steps = distance(d->map, order->destination, s->position);
+        if (steps >= 0 && steps < to_station) to_station = steps;
+    }
+    if (to_station == INT_MAX) return 0;
 
-        if (station->capacity <= 0 || station->charging == NULL) {
+    int best = -1;
+    long long best_eta = LLONG_MAX;
+    for (int i = 0; i < d->plane_count; ++i) {
+        Plane *p = &d->planes[i];
+        if (p->status != PLANE_IDLE || !plane_can_carry(p, order->weight))
             continue;
-        }
-
-        int distance = get_distance(
-            dispatcher->map,
-            position,
-            station->position
-        );
-
-        if (distance >= 0 && distance < best) {
-            best = distance;
-        }
+        int to_warehouse = distance(d->map, p->position, d->warehouse);
+        if (to_warehouse < 0) continue;
+        int pickup_ticks = to_warehouse > 0 ? to_warehouse : 1;
+        int delivery_ticks = to_client > 0 ? to_client : 1;
+        long long eta = (long long)time + pickup_ticks + delivery_ticks - 1;
+        long long total_steps = (long long)to_warehouse + to_client + to_station;
+        if (eta > order->deadline || total_steps > INT_MAX ||
+            !plane_can_reach(p, (int)total_steps)) continue;
+        if (eta < best_eta) { best = i; best_eta = eta; }
     }
-
-    if (best == INT_MAX) {
-        return -1;
-    }
-
-    return best;
-}
-
-int dispatcher_assign(Dispatcher *dispatcher, Order *order,
-                      int current_time) {
-    if (dispatcher == NULL || order == NULL ||
-        dispatcher->map == NULL) {
-        return 0;
-    }
-
-    if (order->status != ORDER_PENDING ||
-        current_time < order->created_at ||
-        current_time > order->deadline) {
-        return 0;
-    }
-
-    int best_plane = -1;
-    int best_time = INT_MAX;
-
-    int delivery_distance = get_distance(
-        dispatcher->map,
-        dispatcher->warehouse,
-        order->destination
-    );
-
-    if (delivery_distance < 0) {
-        return 0;
-    }
-
-    int station_distance = nearest_station_distance(
-        dispatcher,
-        order->destination
-    );
-
-    if (station_distance < 0) {
-        return 0;
-    }
-
-    for (int i = 0; i < dispatcher->plane_count; ++i) {
-        Plane *plane = &dispatcher->planes[i];
-
-        if (plane->status != PLANE_IDLE ||
-            plane->station_id != -1) {
-            continue;
-        }
-
-        if (!plane_can_carry(plane, order->weight)) {
-            continue;
-        }
-
-        int warehouse_distance = get_distance(
-            dispatcher->map,
-            plane->position,
-            dispatcher->warehouse
-        );
-
-        if (warehouse_distance < 0) {
-            continue;
-        }
-
-        long long total_distance =
-            (long long)warehouse_distance +
-            delivery_distance +
-            station_distance;
-
-        long long delivery_time =
-            (long long)current_time +
-            warehouse_distance +
-            delivery_distance;
-
-        if (delivery_time > order->deadline) {
-            continue;
-        }
-
-        if (total_distance > INT_MAX) {
-            continue;
-        }
-
-        if (!plane_can_reach(plane, (int)total_distance)) {
-            continue;
-        }
-
-        if (delivery_time < best_time) {
-            best_time = (int)delivery_time;
-            best_plane = i;
-        }
-    }
-
-    if (best_plane == -1) {
-        return 0;
-    }
-
-    Plane *plane = &dispatcher->planes[best_plane];
-
-    if (!order_assign(order, plane->id)) {
-        return 0;
-    }
-
-    plane->status = PLANE_DELIVERING;
-
+    if (best < 0) return 0;
+    Plane *p = &d->planes[best];
+    if (!order_assign(order, p->id)) return 0;
+    p->status = PLANE_DELIVERING;
     return 1;
 }
