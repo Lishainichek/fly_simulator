@@ -21,6 +21,8 @@ typedef struct {
     int max_time;
     int weather_interval;
 } Scenario;
+
+/* Returns 1 on success.  On failure fills error and frees partial data. */
 int scenario_load(Scenario *scenario, const char *filename,
                   char *error, size_t error_size);
 void scenario_destroy(Scenario *scenario);

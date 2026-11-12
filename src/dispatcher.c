@@ -21,6 +21,7 @@ int dispatcher_assign(Dispatcher *d, Order *order, int time) {
 
     int to_client = distance(d->map, d->warehouse, order->destination);
     if (to_client < 0) return 0;
+
     int to_station = INT_MAX;
     for (int j = 0; j < d->station_count; ++j) {
         Station *s = &d->stations[j];
@@ -38,6 +39,8 @@ int dispatcher_assign(Dispatcher *d, Order *order, int time) {
             continue;
         int to_warehouse = distance(d->map, p->position, d->warehouse);
         if (to_warehouse < 0) continue;
+        /* Arrival and pickup happen on the same tick. A zero-length path
+           still takes one tick to complete the next delivery stage. */
         int pickup_ticks = to_warehouse > 0 ? to_warehouse : 1;
         int delivery_ticks = to_client > 0 ? to_client : 1;
         long long eta = (long long)time + pickup_ticks + delivery_ticks - 1;

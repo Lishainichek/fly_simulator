@@ -37,7 +37,6 @@ static void clear_path(Delivery *delivery) {
     delivery->path_index = 0;
     delivery->replan_required = 0;
 }
-
 static void complete_route(Delivery *delivery) {
     clear_path(delivery);
     delivery->order_id = -1;
@@ -62,7 +61,6 @@ static int path_distance(const Dispatcher *dispatcher, Point a, Point b) {
     free(path);
     return n - 1;
 }
-
 static Station *select_station(Simulation *sim, const Plane *plane) {
     Station *best = NULL;
     int shortest = INT_MAX;
@@ -306,6 +304,37 @@ Simulation create_simulation(Dispatcher dispatcher, Order *orders,
     }
     return sim;
 }
+
+void simulation_step_role(Simulation *sim, int role) {
+    switch (role) {
+        case 0:
+            for (int i = 0; i < sim->order_count; ++i) order_step(sim, i);
+            break;
+        case 1: dispatcher_step(sim); break;
+        case 2:
+            for (int i = 0; i < sim->delivery_count; ++i) plane_step(sim, i);
+            break;
+        case 3:
+            for (int i = 0; i < sim->dispatcher.station_count; ++i) station_step(sim, i);
+            break;
+    }
+}
+
+void simulation_step_weather(Simulation *sim) {
+    WeatherType before = sim->weather.type;
+    weather_tick(&sim->weather, sim->current_time);
+    if (before != sim->weather.type) {
+        if (sim->verbose)
+            printf("[%d] Weather changed to %s (%s)\n", sim->current_time,
+                   weather_name(&sim->weather),
+                   weather_can_fly(&sim->weather) ? "flights resumed" : "flights suspended");
+        if (weather_can_fly(&sim->weather)) {
+            for (int i = 0; i < sim->delivery_count; ++i)
+                if (sim->deliveries[i].stage != DELIVERY_FINISHED)
+                    sim->deliveries[i].replan_required = 1;
+        }
+    }
+}
 typedef struct {
     Simulation *sim;
     int index;
@@ -354,19 +383,7 @@ int simulation_tick(Simulation *sim) {
         if (pthread_mutex_init(&sim->mutex, NULL) != 0) return 0;
         sim->mutex_ready = 1;
     }
-    WeatherType before = sim->weather.type;
-    weather_tick(&sim->weather, sim->current_time);
-    if (before != sim->weather.type) {
-        if (sim->verbose)
-            printf("[%d] Weather changed to %s (%s)\n",
-                   sim->current_time, weather_name(&sim->weather),
-                   weather_can_fly(&sim->weather) ? "flights resumed" : "flights suspended");
-        if (weather_can_fly(&sim->weather)) {
-            for (int i = 0; i < sim->delivery_count; ++i)
-                if (sim->deliveries[i].stage != DELIVERY_FINISHED)
-                    sim->deliveries[i].replan_required = 1;
-        }
-    }
+    simulation_step_weather(sim);
     if (!run_phase(sim, 0, sim->order_count) ||
         !run_phase(sim, 1, 1) ||
         !run_phase(sim, 2, sim->delivery_count) ||
@@ -379,7 +396,7 @@ int simulation_tick(Simulation *sim) {
     return 1;
 }
 
-static int all_done(const Simulation *sim) {
+int simulation_all_done(const Simulation *sim) {
     for (int i = 0; i < sim->order_count; ++i)
         if (sim->orders[i].status != ORDER_DELIVERED &&
             sim->orders[i].status != ORDER_FAILED) return 0;
@@ -388,15 +405,7 @@ static int all_done(const Simulation *sim) {
     return 1;
 }
 
-int simulation_run(Simulation *sim) {
-    if (!sim) return 0;
-    if (sim->order_count > 0 && sim->delivery_count == 0 && sim->dispatcher.plane_count > 0)
-        return 0;
-    while (!sim->stop_requested &&
-           (sim->max_time == 0 || sim->current_time < sim->max_time) &&
-           !all_done(sim)) {
-        if (!simulation_tick(sim)) return 0;
-    }
+void simulation_finish_time_limit(Simulation *sim) {
     if (sim->max_time > 0 && sim->current_time >= sim->max_time) {
         for (int i = 0; i < sim->order_count; ++i) {
             if (order_fail(&sim->orders[i]) && sim->verbose)
@@ -404,6 +413,18 @@ int simulation_run(Simulation *sim) {
                        sim->current_time, sim->orders[i].id);
         }
     }
+}
+
+int simulation_run(Simulation *sim) {
+    if (!sim) return 0;
+    if (sim->order_count > 0 && sim->delivery_count == 0 && sim->dispatcher.plane_count > 0)
+        return 0;
+    while (!sim->stop_requested &&
+           (sim->max_time == 0 || sim->current_time < sim->max_time) &&
+           !simulation_all_done(sim)) {
+        if (!simulation_tick(sim)) return 0;
+    }
+    simulation_finish_time_limit(sim);
     return 1;
 }
 

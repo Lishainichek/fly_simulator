@@ -125,7 +125,7 @@ static void test_simulation_delivery(void) {
     assert(drone.status == PLANE_IDLE || drone.status == PLANE_CHARGING);
     assert(drone.energy >= 0 && drone.energy <= drone.max_energy);
     assert(sim.total_distance == 8);
-    assert(sim.current_time < 30);
+    assert(sim.current_time < 30); /* early completion */
     destroy_simulation(&sim);
     destroy_station(&station);
     destroy_map(&map);

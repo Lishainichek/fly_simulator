@@ -46,4 +46,9 @@ int simulation_tick(Simulation *sim);
 int simulation_run(Simulation *sim);
 void destroy_simulation(Simulation *sim);
 void simulation_print_statistics(const Simulation *sim);
+void simulation_step_role(Simulation *sim, int role);
+void simulation_step_weather(Simulation *sim);
+int simulation_all_done(const Simulation *sim);
+void simulation_finish_time_limit(Simulation *sim);
+
 #endif
