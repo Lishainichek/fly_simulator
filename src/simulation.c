@@ -1,9 +1,25 @@
 #include "simulation.h"
 
 #include <limits.h>
+#include <stdarg.h>
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+
+static void event_print(const Simulation *sim, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    if (sim->event_callback) {
+        char message[512];
+        vsnprintf(message, sizeof(message), format, args);
+        message[strcspn(message, "\n")] = '\0';
+        sim->event_callback(sim->event_role, message, sim->event_context);
+    } else {
+        vprintf(format, args);
+    }
+    va_end(args);
+}
 
 static int same_point(Point a, Point b) {
     return a.x == b.x && a.y == b.y;
@@ -82,7 +98,7 @@ static void route_to_station(Simulation *sim, Delivery *delivery, Plane *plane) 
     Station *station = select_station(sim, plane);
     if (!station) {
         if (sim->verbose)
-            printf("[%d] Plane #%d: no reachable charging station, grounded at (%d,%d)\n",
+            event_print(sim, "[%d] Plane #%d: no reachable charging station, grounded at (%d,%d)\n",
                    sim->current_time, plane->id, plane->position.x, plane->position.y);
         plane->status = PLANE_IDLE;
         complete_route(delivery);
@@ -96,7 +112,7 @@ static void route_to_station(Simulation *sim, Delivery *delivery, Plane *plane) 
         plane->status = PLANE_IDLE;
         complete_route(delivery);
     } else if (sim->verbose) {
-        printf("[%d] Plane #%d returning to Station #%d\n",
+        event_print(sim, "[%d] Plane #%d returning to Station #%d\n",
                sim->current_time, plane->id, station->id);
     }
 }
@@ -106,13 +122,13 @@ static void order_step(Simulation *sim, int index) {
     if (order->status == ORDER_DELIVERED || order->status == ORDER_FAILED) return;
     if (sim->current_time <= order->deadline) {
         if (sim->current_time == order->created_at && sim->verbose)
-            printf("[%d] Order #%d received: (%d,%d), weight=%d, deadline=%d\n",
+            event_print(sim, "[%d] Order #%d received: (%d,%d), weight=%d, deadline=%d\n",
                    sim->current_time, order->id, order->destination.x,
                    order->destination.y, order->weight, order->deadline);
         return;
     }
     if (sim->verbose)
-        printf("[%d] Order #%d expired (deadline=%d)\n",
+        event_print(sim, "[%d] Order #%d expired (deadline=%d)\n",
                sim->current_time, order->id, order->deadline);
     order_fail(order);
     for (int i = 0; i < sim->delivery_count; ++i) {
@@ -139,6 +155,7 @@ static void dispatcher_step(Simulation *sim) {
                 break;
             }
         }
+        /* Dispatch and route reservation are one critical section. */
         if (!plane || !delivery || delivery->stage != DELIVERY_FINISHED ||
             !build_path(sim, delivery, plane->position, sim->dispatcher.warehouse)) {
             order_fail(order);
@@ -149,7 +166,7 @@ static void dispatcher_step(Simulation *sim) {
         delivery->order_id = order->id;
         delivery->stage = DELIVERY_TO_WAREHOUSE;
         if (sim->verbose)
-            printf("[%d] Order #%d assigned to Plane #%d\n",
+            event_print(sim, "[%d] Order #%d assigned to Plane #%d\n",
                    sim->current_time, order->id, plane->id);
     }
     for (int j = 0; j < sim->delivery_count; ++j) {
@@ -170,20 +187,20 @@ static void arrive_at_station(Simulation *sim, Delivery *delivery, Plane *plane)
     if (plane->energy == plane->max_energy) {
         plane->status = PLANE_IDLE;
         if (sim->verbose)
-            printf("[%d] Plane #%d arrived at Station #%d fully charged\n",
+            event_print(sim, "[%d] Plane #%d arrived at Station #%d fully charged\n",
                    sim->current_time, plane->id, station->id);
         complete_route(delivery);
         return;
     }
     if (station_arrive(station, plane)) {
         if (sim->verbose)
-            printf("[%d] Plane #%d arrived at Station #%d: %s\n",
+            event_print(sim, "[%d] Plane #%d arrived at Station #%d: %s\n",
                    sim->current_time, plane->id, station->id,
                    "charging");
         complete_route(delivery);
     } else {
         if (plane->status != PLANE_WAITING && sim->verbose)
-            printf("[%d] Plane #%d waiting for slot at Station #%d\n",
+            event_print(sim, "[%d] Plane #%d waiting for slot at Station #%d\n",
                    sim->current_time, plane->id, station->id);
         plane->status = PLANE_WAITING;
     }
@@ -193,13 +210,13 @@ static void arrive_at_destination(Simulation *sim, Delivery *delivery, Plane *pl
     Order *order = find_order(sim, delivery->order_id);
     if (order && order_deliver(order, plane->id, sim->current_time)) {
         if (sim->verbose)
-            printf("[%d] Plane #%d delivered Order #%d at (%d,%d)\n",
+            event_print(sim, "[%d] Plane #%d delivered Order #%d at (%d,%d)\n",
                    sim->current_time, plane->id, order->id,
                    plane->position.x, plane->position.y);
     } else if (order) {
         order_fail(order);
         if (sim->verbose)
-            printf("[%d] Plane #%d could not deliver Order #%d (deadline)\n",
+            event_print(sim, "[%d] Plane #%d could not deliver Order #%d (deadline)\n",
                    sim->current_time, plane->id, order->id);
     }
     route_to_station(sim, delivery, plane);
@@ -214,7 +231,7 @@ static void plane_arrive(Simulation *sim, Delivery *delivery, Plane *plane) {
                 break;
             }
             if (sim->verbose)
-                printf("[%d] Plane #%d picked up Order #%d at warehouse\n",
+                event_print(sim, "[%d] Plane #%d picked up Order #%d at warehouse\n",
                        sim->current_time, plane->id, order->id);
             delivery->stage = DELIVERY_TO_DESTINATION;
             if (!build_path(sim, delivery, plane->position, order->destination)) {
@@ -256,7 +273,7 @@ static void plane_step(Simulation *sim, int index) {
             return;
         }
         if (sim->verbose)
-            printf("[%d] Plane #%d route replanned after weather change\n",
+            event_print(sim, "[%d] Plane #%d route replanned after weather change\n",
                    sim->current_time, plane->id);
     }
     if (delivery->path_index + 1 < delivery->path_length) {
@@ -268,7 +285,7 @@ static void plane_step(Simulation *sim, int index) {
         ++delivery->path_index;
         ++sim->total_distance;
         if (sim->verbose)
-            printf("[%d] Plane #%d moved to (%d,%d), energy=%d\n",
+            event_print(sim, "[%d] Plane #%d moved to (%d,%d), energy=%d\n",
                    sim->current_time, plane->id, plane->position.x,
                    plane->position.y, plane->energy);
     }
@@ -277,8 +294,22 @@ static void plane_step(Simulation *sim, int index) {
 }
 
 static void station_step(Simulation *sim, int index) {
-    station_tick(&sim->dispatcher.stations[index], sim->current_time,
-                 sim->verbose);
+    Station *station = &sim->dispatcher.stations[index];
+    if (sim->event_callback && sim->verbose) {
+        for (int i = 0; i < station->charging_count; ++i) {
+            const Plane *plane = station->charging[i];
+            int energy = plane->energy + station->charging_speed;
+            if (energy >= plane->max_energy)
+                event_print(sim, "[%d] Drone #%d finished charging at station #%d\n",
+                            sim->current_time, plane->id, station->id);
+            else
+                event_print(sim, "[%d] Drone #%d charging: %d/%d\n",
+                            sim->current_time, plane->id, energy, plane->max_energy);
+        }
+        station_tick(station, sim->current_time, 0);
+    } else {
+        station_tick(station, sim->current_time, sim->verbose);
+    }
 }
 
 Simulation create_simulation(Dispatcher dispatcher, Order *orders,
@@ -306,6 +337,40 @@ Simulation create_simulation(Dispatcher dispatcher, Order *orders,
     }
     return sim;
 }
+
+void simulation_step_role(Simulation *sim, int role) {
+    sim->event_role = role;
+    switch (role) {
+        case 0:
+            for (int i = 0; i < sim->order_count; ++i) order_step(sim, i);
+            break;
+        case 1: dispatcher_step(sim); break;
+        case 2:
+            for (int i = 0; i < sim->delivery_count; ++i) plane_step(sim, i);
+            break;
+        case 3:
+            for (int i = 0; i < sim->dispatcher.station_count; ++i) station_step(sim, i);
+            break;
+    }
+}
+
+void simulation_step_weather(Simulation *sim) {
+    sim->event_role = 4;
+    WeatherType before = sim->weather.type;
+    weather_tick(&sim->weather, sim->current_time);
+    if (before != sim->weather.type) {
+        if (sim->verbose)
+            event_print(sim, "[%d] Weather changed to %s (%s)\n", sim->current_time,
+                   weather_name(&sim->weather),
+                   weather_can_fly(&sim->weather) ? "flights resumed" : "flights suspended");
+        if (weather_can_fly(&sim->weather)) {
+            for (int i = 0; i < sim->delivery_count; ++i)
+                if (sim->deliveries[i].stage != DELIVERY_FINISHED)
+                    sim->deliveries[i].replan_required = 1;
+        }
+    }
+}
+
 typedef struct {
     Simulation *sim;
     int index;
@@ -354,19 +419,7 @@ int simulation_tick(Simulation *sim) {
         if (pthread_mutex_init(&sim->mutex, NULL) != 0) return 0;
         sim->mutex_ready = 1;
     }
-    WeatherType before = sim->weather.type;
-    weather_tick(&sim->weather, sim->current_time);
-    if (before != sim->weather.type) {
-        if (sim->verbose)
-            printf("[%d] Weather changed to %s (%s)\n",
-                   sim->current_time, weather_name(&sim->weather),
-                   weather_can_fly(&sim->weather) ? "flights resumed" : "flights suspended");
-        if (weather_can_fly(&sim->weather)) {
-            for (int i = 0; i < sim->delivery_count; ++i)
-                if (sim->deliveries[i].stage != DELIVERY_FINISHED)
-                    sim->deliveries[i].replan_required = 1;
-        }
-    }
+    simulation_step_weather(sim);
     if (!run_phase(sim, 0, sim->order_count) ||
         !run_phase(sim, 1, 1) ||
         !run_phase(sim, 2, sim->delivery_count) ||
@@ -379,7 +432,7 @@ int simulation_tick(Simulation *sim) {
     return 1;
 }
 
-static int all_done(const Simulation *sim) {
+int simulation_all_done(const Simulation *sim) {
     for (int i = 0; i < sim->order_count; ++i)
         if (sim->orders[i].status != ORDER_DELIVERED &&
             sim->orders[i].status != ORDER_FAILED) return 0;
@@ -388,22 +441,27 @@ static int all_done(const Simulation *sim) {
     return 1;
 }
 
+void simulation_finish_time_limit(Simulation *sim) {
+    sim->event_role = 0;
+    if (sim->max_time > 0 && sim->current_time >= sim->max_time) {
+        for (int i = 0; i < sim->order_count; ++i) {
+            if (order_fail(&sim->orders[i]) && sim->verbose)
+                event_print(sim, "[%d] Order #%d failed: simulation time limit\n",
+                       sim->current_time, sim->orders[i].id);
+        }
+    }
+}
+
 int simulation_run(Simulation *sim) {
     if (!sim) return 0;
     if (sim->order_count > 0 && sim->delivery_count == 0 && sim->dispatcher.plane_count > 0)
         return 0;
     while (!sim->stop_requested &&
            (sim->max_time == 0 || sim->current_time < sim->max_time) &&
-           !all_done(sim)) {
+           !simulation_all_done(sim)) {
         if (!simulation_tick(sim)) return 0;
     }
-    if (sim->max_time > 0 && sim->current_time >= sim->max_time) {
-        for (int i = 0; i < sim->order_count; ++i) {
-            if (order_fail(&sim->orders[i]) && sim->verbose)
-                printf("[%d] Order #%d failed: simulation time limit\n",
-                       sim->current_time, sim->orders[i].id);
-        }
-    }
+    simulation_finish_time_limit(sim);
     return 1;
 }
 

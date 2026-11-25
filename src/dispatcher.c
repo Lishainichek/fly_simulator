@@ -21,6 +21,7 @@ int dispatcher_assign(Dispatcher *d, Order *order, int time) {
 
     int to_client = distance(d->map, d->warehouse, order->destination);
     if (to_client < 0) return 0;
+
     int to_station = INT_MAX;
     for (int j = 0; j < d->station_count; ++j) {
         Station *s = &d->stations[j];

@@ -21,6 +21,7 @@ typedef struct {
     int max_time;
     int weather_interval;
 } Scenario;
+
 int scenario_load(Scenario *scenario, const char *filename,
                   char *error, size_t error_size);
 void scenario_destroy(Scenario *scenario);
