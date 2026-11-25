@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <limits.h>
 #include "../inc/map.h"
 #include <stdio.h>
 Point make_point(int x, int y) {

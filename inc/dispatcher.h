@@ -8,12 +8,9 @@
 
 typedef struct {
     Map *map;
-
     Point warehouse;
-
     Plane *planes;
     int plane_count;
-
     Station *stations;
     int station_count;
 } Dispatcher;
@@ -21,8 +18,5 @@ typedef struct {
 Dispatcher create_dispatcher(Map *map, Point warehouse,
                              Plane *planes, int plane_count,
                              Station *stations, int station_count);
-
-int dispatcher_assign(Dispatcher *dispatcher, Order *order,
-                      int current_time);
-
-#endif  
+int dispatcher_assign(Dispatcher *dispatcher, Order *order, int current_time);
+#endif
