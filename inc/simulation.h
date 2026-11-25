@@ -23,6 +23,8 @@ typedef struct {
     int replan_required;
 } Delivery;
 
+typedef void (*SimulationEventCallback)(int role, const char *text, void *context);
+
 typedef struct {
     Dispatcher dispatcher;
     Order *orders;
@@ -34,6 +36,9 @@ typedef struct {
     int max_time;
     int delay_ms;
     int verbose;
+    SimulationEventCallback event_callback;
+    void *event_context;
+    int event_role;
     volatile sig_atomic_t stop_requested;
     long long total_distance;
     pthread_mutex_t mutex;
@@ -46,4 +51,9 @@ int simulation_tick(Simulation *sim);
 int simulation_run(Simulation *sim);
 void destroy_simulation(Simulation *sim);
 void simulation_print_statistics(const Simulation *sim);
+void simulation_step_role(Simulation *sim, int role);
+void simulation_step_weather(Simulation *sim);
+int simulation_all_done(const Simulation *sim);
+void simulation_finish_time_limit(Simulation *sim);
+
 #endif
