@@ -23,7 +23,6 @@ static void on_signal(int signal_number) {
 
 static void print_usage(const char *program) {
     printf("Usage: %s --mode MODE [--instance ID] [--scenario FILE] [--quiet] [--delay MS] [--max-time N] [--weather-interval N]\n", program);
-    puts("MODE: fork-unnamed (4-5), fork-named (6), external-shm (7-8)");
     puts("For external-shm start four ./fly_process_worker instances (orders, dispatcher, drones, stations).");
     puts("To clean abandoned IPC objects: --cleanup --instance ID");
 }
